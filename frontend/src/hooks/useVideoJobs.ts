@@ -57,6 +57,7 @@ export function useVideoJobs(options: UseVideoJobsOptions = {}) {
       return
     }
 
+    setLoading(true)
     try {
       const params = new URLSearchParams()
       if (channelId !== null) {
@@ -125,6 +126,8 @@ export function useVideoJobs(options: UseVideoJobsOptions = {}) {
       } else {
         setError('Ошибка загрузки задач')
       }
+    } finally {
+      setLoading(false)
     }
   }, [channelId, notifications, onJobStatusChange])
 
