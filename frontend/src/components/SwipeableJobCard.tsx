@@ -97,17 +97,6 @@ export const SwipeableJobCard: React.FC<SwipeableJobCardProps> = ({
     handleStart(e.clientX)
   }
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if ('ontouchstart' in window) return
-    if (!isDraggingRef.current) return
-    handleMove(e.clientX)
-  }
-
-  const handleMouseUp = () => {
-    if ('ontouchstart' in window) return
-    handleEnd()
-  }
-
   // Обработка клика на кнопку удаления
   const handleDeleteClick = () => {
     setShowDeleteConfirm(true)
