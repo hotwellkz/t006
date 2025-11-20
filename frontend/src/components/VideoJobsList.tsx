@@ -12,6 +12,7 @@ interface VideoJobsListProps {
   onReject?: (jobId: string) => Promise<void>
   onDelete?: (jobId: string) => Promise<void>
   rejectingJobId?: string | null
+  approvingJobId?: string | null
   showChannelName?: boolean
 }
 
@@ -24,6 +25,7 @@ export const VideoJobsList: React.FC<VideoJobsListProps> = ({
   onReject,
   onDelete,
   rejectingJobId = null,
+  approvingJobId = null,
   showChannelName = false,
 }) => {
   const [filterStatus, setFilterStatus] = useState<VideoJobStatus | 'all'>('all')
@@ -170,6 +172,7 @@ export const VideoJobsList: React.FC<VideoJobsListProps> = ({
                 onDelete={onDelete}
                 loading={loading}
                 rejectingJobId={rejectingJobId}
+                approvingJobId={approvingJobId}
               />
             )
           })}

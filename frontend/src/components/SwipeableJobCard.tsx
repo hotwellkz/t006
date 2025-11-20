@@ -14,6 +14,7 @@ interface SwipeableJobCardProps {
   onDelete?: (jobId: string) => Promise<void>
   loading?: boolean
   rejectingJobId?: string | null
+  approvingJobId?: string | null
 }
 
 export const SwipeableJobCard: React.FC<SwipeableJobCardProps> = ({
@@ -28,6 +29,7 @@ export const SwipeableJobCard: React.FC<SwipeableJobCardProps> = ({
   onDelete,
   loading = false,
   rejectingJobId = null,
+  approvingJobId = null,
 }) => {
   const [swipeOffset, setSwipeOffset] = useState(0)
   const [isSwiping, setIsSwiping] = useState(false)
@@ -255,16 +257,25 @@ export const SwipeableJobCard: React.FC<SwipeableJobCardProps> = ({
               <div className="job-card__actions">
                 <button
                   className="button button-success"
-                  onClick={() => onApprove(job.id, job.videoTitle)}
-                  disabled={loading || job.status === 'uploaded'}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onApprove(job.id, job.videoTitle)
+                  }}
+                  disabled={loading || job.status === 'uploaded' || approvingJobId === job.id}
+                  title={approvingJobId === job.id ? 'Загрузка в Google Drive...' : 'Одобрить и отправить в Google Drive'}
                 >
-                  ✅ Одобрить и отправить в Google Drive
+                  {approvingJobId === job.id ? '⏳ Загрузка в Google Drive...' : '✅ Одобрить и отправить в Google Drive'}
                 </button>
                 {onReject && (
                   <button
                     className="button button-danger"
-                    onClick={() => onReject(job.id)}
-                    disabled={loading || rejectingJobId === job.id}
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onReject(job.id)
+                    }}
+                    disabled={loading || rejectingJobId === job.id || approvingJobId === job.id}
                     title={rejectingJobId === job.id ? 'Отклонение...' : 'Отклонить видео'}
                   >
                     {rejectingJobId === job.id ? '⏳ Отклонение...' : '🗑 Отклонить'}

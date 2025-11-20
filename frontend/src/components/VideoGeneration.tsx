@@ -104,6 +104,7 @@ const VideoGeneration: React.FC = () => {
   const [jobCreationInfo, setJobCreationInfo] = useState<{ id: string; title?: string } | null>(null)
   const [copyToast, setCopyToast] = useState<string>('') // Для toast-уведомления о копировании
   const [rejectingJobId, setRejectingJobId] = useState<string | null>(null) // ID задачи, которая сейчас отклоняется
+  const [approvingJobId, setApprovingJobId] = useState<string | null>(null) // ID задачи, которая сейчас одобряется
   
   // Состояния для модалки голосового ввода
   // Теперь используем MediaRecorder + OpenAI Whisper на backend вместо браузерного SpeechRecognition
@@ -694,27 +695,52 @@ const VideoGeneration: React.FC = () => {
   }
 
   const handleApproveJob = async (jobId: string, jobTitle?: string) => {
-    setLoading(true)
+    const job = videoJobs.find(j => j.id === jobId)
+    if (!job) {
+      toast.error('Задача не найдена')
+      return
+    }
+
+    // Проверяем, что задача в статусе ready
+    if (job.status !== 'ready') {
+      toast.error('Можно одобрить только готовые видео')
+      return
+    }
+
+    setApprovingJobId(jobId)
     setError('')
     setSuccess('')
 
     try {
-      await apiFetch(`/api/video-jobs/${jobId}/approve`, {
+      console.log('[Approve] Starting approval for job:', jobId, 'title:', jobTitle)
+      
+      const response = await apiFetch(`/api/video-jobs/${jobId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           videoTitle: jobTitle?.trim() || undefined,
         }),
       })
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || errorData.message || `Ошибка ${response.status}`)
+      }
+      
+      const result = await response.json()
+      console.log('[Approve] Job approved successfully:', result)
+      
       toast.success('Видео успешно загружено в Google Drive!')
       setSuccess('')
       
-      // Обновляем список задач
+      // Обновляем список задач для отображения нового статуса
       await fetchVideoJobs()
     } catch (err: any) {
+      console.error('[Approve] Error approving job:', err)
+      toast.error(err.message || 'Ошибка при одобрении видео')
       setError(err.message)
     } finally {
-      setLoading(false)
+      setApprovingJobId(null)
     }
   }
 
@@ -1638,6 +1664,7 @@ const VideoGeneration: React.FC = () => {
             onReject={handleRejectJob}
             onDelete={handleDeleteJob}
             rejectingJobId={rejectingJobId}
+            approvingJobId={approvingJobId}
             showChannelName={false}
           />
 
