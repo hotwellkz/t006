@@ -136,6 +136,7 @@ export function useVideoJobs(options: UseVideoJobsOptions = {}) {
       }
     } finally {
       setLoading(false)
+      isFetchingRef.current = false
     }
   }, [channelId, notifications, onJobStatusChange])
 
