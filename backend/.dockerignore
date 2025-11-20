@@ -1,0 +1,12 @@
+.git
+node_modules
+dist
+.env
+.env.*
+*.log
+downloads
+Dockerfile
+DEPLOY_CLOUD_RUN.md
+README.md
+**/*.tsbuildinfo
+
