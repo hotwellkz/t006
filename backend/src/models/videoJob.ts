@@ -7,6 +7,7 @@ export type VideoJobStatus =
   | "uploading"        // Загрузка в Google Drive
   | "uploaded"         // Загружено в Google Drive
   | "rejected"         // Отклонено пользователем
+  | "syntax_timeout"   // Таймаут ожидания видео от Syntax
   | "error";           // Ошибка
 
 export interface VideoJob {

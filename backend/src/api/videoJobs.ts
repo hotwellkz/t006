@@ -30,6 +30,12 @@ async function processVideoGeneration(jobId: string): Promise<void> {
     return;
   }
 
+  // Защита от дублей: если видео уже скачано, не обрабатываем повторно
+  if (job.telegramVideoMessageId && job.status === "ready") {
+    console.log(`[VideoJob] Job ${jobId} already has video (messageId: ${job.telegramVideoMessageId}), skipping`);
+    return;
+  }
+
   try {
     // Статус: sending - отправка промпта
     await updateJob(jobId, { status: "sending" });
@@ -43,9 +49,13 @@ async function processVideoGeneration(jobId: string): Promise<void> {
     console.log(`[VideoJob] Job ${jobId}: waiting for video from Syntx`);
 
     // Отправляем промпт в Syntx AI и ждём видео
-    // Используем существующий requestMessageId, если он есть (для повторных попыток)
-    const existingRequestMessageId = job.telegramRequestMessageId;
-    const syntxResult = await sendPromptToSyntx(job.prompt, safeFileName, existingRequestMessageId);
+    // Передаём jobId для маркировки промпта
+    const syntxResult = await sendPromptToSyntx(
+      job.prompt, 
+      safeFileName, 
+      job.id, // jobId для поиска видео
+      job.telegramRequestMessageId // legacy: для обратной совместимости
+    );
 
     // Сохраняем requestMessageId и videoMessageId для связи с ответом
     await updateJob(jobId, { 
@@ -86,8 +96,13 @@ async function processVideoGeneration(jobId: string): Promise<void> {
   } catch (error: any) {
     console.error(`[VideoJob] Job ${jobId} error:`, error);
     const errorMessage = error?.message || error?.toString() || "Неизвестная ошибка";
+    
+    // Проверяем, является ли ошибка таймаутом
+    const isTimeout = errorMessage.includes("Таймаут ожидания видео") || errorMessage.includes("timeout");
+    const finalStatus: VideoJobStatus = isTimeout ? "syntax_timeout" : "error";
+    
     await updateJob(jobId, {
-      status: "error",
+      status: finalStatus,
       errorMessage,
     });
   }

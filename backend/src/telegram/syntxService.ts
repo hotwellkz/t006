@@ -2,6 +2,7 @@ import { TelegramClient, Api } from "telegram";
 import * as fs from "fs";
 import * as path from "path";
 import { getTelegramClient } from "./client";
+import { getAllJobs } from "../firebase/videoJobsService";
 
 export interface SyntxResult {
   localPath: string;
@@ -9,10 +10,29 @@ export interface SyntxResult {
   videoMessageId: number; // ID сообщения с видео от бота
 }
 
+/**
+ * Добавляет маркер jobId в промпт
+ */
+function addJobIdToPrompt(prompt: string, jobId: string): string {
+  const marker = `[JOB_ID: ${jobId}]`;
+  // Добавляем маркер в конец промпта
+  return `${prompt}\n\n${marker}`;
+}
+
+/**
+ * Извлекает jobId из текста сообщения
+ */
+function extractJobIdFromText(text: string | undefined): string | null {
+  if (!text) return null;
+  const match = text.match(/\[JOB_ID:\s*([^\]]+)\]/);
+  return match ? match[1].trim() : null;
+}
+
 export async function sendPromptToSyntx(
   prompt: string,
   customFileName?: string,
-  requestMessageId?: number // Если передан, ищем ответ на это сообщение
+  jobId?: string, // jobId для маркировки промпта
+  requestMessageId?: number // Если передан, ищем ответ на это сообщение (legacy)
 ): Promise<SyntxResult> {
   const client = await getTelegramClient();
   const botUsername = process.env.SYNTX_BOT_USERNAME || "syntxaibot";
@@ -31,30 +51,36 @@ export async function sendPromptToSyntx(
     
     // Отправляем промпт
     let actualRequestMessageId: number;
-    if (requestMessageId) {
-      // Если передан requestMessageId, используем его (для повторных попыток)
+    let actualJobId: string;
+    
+    if (requestMessageId && !jobId) {
+      // Legacy режим: используем существующий requestMessageId (для обратной совместимости)
       actualRequestMessageId = requestMessageId;
-      console.log(`[Syntx] Используем существующий requestMessageId: ${actualRequestMessageId}`);
+      actualJobId = `legacy_${requestMessageId}`;
+      console.log(`[Syntx] Используем существующий requestMessageId: ${actualRequestMessageId} (legacy режим)`);
     } else {
-      // Иначе отправляем новое сообщение
-      console.log(`[Syntx] Отправляем промпт боту ${botUsername}...`);
-      const sentMessage = await client.sendMessage(entity, { message: prompt });
+      // Новый режим: добавляем jobId в промпт
+      if (!jobId) {
+        throw new Error("jobId обязателен для отправки промпта в Syntax");
+      }
+      actualJobId = jobId;
+      
+      // Добавляем маркер jobId в промпт
+      const promptWithJobId = addJobIdToPrompt(prompt, actualJobId);
+      console.log(`[Syntx] Отправляем промпт боту ${botUsername} с jobId: ${actualJobId}...`);
+      const sentMessage = await client.sendMessage(entity, { message: promptWithJobId });
       actualRequestMessageId = sentMessage.id;
-      console.log(`[Syntx] ✅ Промпт отправлен боту ${botUsername}, message ID: ${actualRequestMessageId}`);
+      console.log(`[Syntx] ✅ Промпт отправлен боту ${botUsername}, message ID: ${actualRequestMessageId}, jobId: ${actualJobId}`);
     }
 
-    console.log(`[Syntx] Ожидаем видео (таймаут: 15 минут)...`);
+    console.log(`[Syntx] Ожидаем видео для jobId ${actualJobId} (таймаут: 30 минут)...`);
 
-    // Получаем список уже использованных видео для предотвращения дубликатов
-    const usedVideoMessageIds = await getUsedVideoMessageIds();
-
-    // Ждём видеосообщение, связанное с нашим запросом через reply_to_message_id
-    const videoMessage = await waitForSyntxVideo(
+    // Ищем видео по jobId
+    const videoMessage = await waitForSyntxVideoByJobId(
       client,
       entity,
-      actualRequestMessageId,
-      15 * 60 * 1000, // 15 минут
-      usedVideoMessageIds
+      actualJobId,
+      30 * 60 * 1000 // 30 минут
     );
 
     // Подготавливаем директорию для загрузок с абсолютным путём
@@ -155,6 +181,149 @@ export async function sendPromptToSyntx(
   }
 }
 
+/**
+ * Находит видео от Syntax-бота по jobId в caption или тексте сообщения
+ */
+async function findSyntaxVideoByJobId(
+  client: TelegramClient,
+  chat: Api.TypeEntityLike,
+  jobId: string,
+  botUsername: string
+): Promise<Api.Message | null> {
+  try {
+    // Загружаем последние N сообщений из чата с Syntax
+    const messages = await client.getMessages(chat, {
+      limit: 100, // Увеличиваем лимит для надёжности
+    });
+
+    // Получаем список уже использованных video message IDs
+    const usedVideoMessageIds = await getUsedVideoMessageIds();
+
+    // Фильтруем сообщения с видео от бота
+    for (const message of messages) {
+      // Проверяем, что сообщение от бота (не от нас)
+      const fromId = message.fromId;
+      if (fromId) {
+        try {
+          const sender = await client.getEntity(fromId);
+          if (sender instanceof Api.User) {
+            const senderUsername = sender.username?.toLowerCase();
+            const expectedUsername = botUsername.toLowerCase().replace('@', '');
+            if (senderUsername !== expectedUsername) {
+              // Это не от нужного бота, пропускаем
+              continue;
+            }
+          }
+        } catch (e) {
+          // Если не удалось получить информацию об отправителе, продолжаем проверку
+        }
+      }
+
+      // Проверяем, что это видео не было уже использовано
+      if (usedVideoMessageIds.has(message.id)) {
+        continue;
+      }
+
+      // Проверяем, есть ли видео
+      if (message.media) {
+        if (message.media instanceof Api.MessageMediaDocument) {
+          const document = message.media.document;
+          if (document instanceof Api.Document) {
+            let hasVideo = false;
+            for (const attr of document.attributes) {
+              if (attr instanceof Api.DocumentAttributeVideo) {
+                hasVideo = true;
+                break;
+              }
+            }
+            
+            if (hasVideo) {
+              // Проверяем caption или message text на наличие jobId
+              // В GramJS: message.message - это текст сообщения, message.media может иметь caption
+              const messageText = message.message || "";
+              // Для Api.MessageMediaDocument caption может быть в message.media
+              let caption = "";
+              if (message.media instanceof Api.MessageMediaDocument) {
+                // В GramJS caption может быть строкой или объектом, проверяем оба варианта
+                const mediaCaption = (message.media as any).caption;
+                if (typeof mediaCaption === "string") {
+                  caption = mediaCaption;
+                } else if (mediaCaption && typeof mediaCaption === "object" && "text" in mediaCaption) {
+                  caption = (mediaCaption as any).text || "";
+                }
+              }
+              
+              const fullText = `${messageText} ${caption}`.trim();
+              
+              console.log(`[Syntx] Проверяем сообщение ${message.id}: text="${messageText.substring(0, 50)}...", caption="${caption.substring(0, 50)}..."`);
+              
+              const extractedJobId = extractJobIdFromText(fullText);
+              
+              if (extractedJobId === jobId) {
+                console.log(`[Syntx] ✅ Видео найдено по jobId: message ID: ${message.id}, jobId: ${jobId}`);
+                const document = (message.media as Api.MessageMediaDocument).document as Api.Document;
+                for (const attr of document.attributes) {
+                  if (attr instanceof Api.DocumentAttributeVideo) {
+                    console.log(`[Syntx] Video info: duration=${attr.duration}s, size=${document.size} bytes`);
+                    return message;
+                  }
+                }
+              } else if (extractedJobId) {
+                console.log(`[Syntx] Найдён другой jobId в сообщении ${message.id}: ${extractedJobId} (ожидали ${jobId})`);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return null; // Видео не найдено
+  } catch (error) {
+    console.error("[Syntx] Ошибка при поиске видео по jobId:", error);
+    return null;
+  }
+}
+
+/**
+ * Ожидает видео от Syntax-бота по jobId
+ */
+async function waitForSyntxVideoByJobId(
+  client: TelegramClient,
+  chat: Api.TypeEntityLike,
+  jobId: string,
+  timeoutMs: number
+): Promise<Api.Message> {
+  const startTime = Date.now();
+  const pollInterval = 10000; // 10 секунд
+  const botUsername = process.env.SYNTX_BOT_USERNAME || "syntxaibot";
+
+  console.log(`[Syntx] Ожидаем видео с jobId: ${jobId}`);
+
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const videoMessage = await findSyntaxVideoByJobId(client, chat, jobId, botUsername);
+      
+      if (videoMessage) {
+        return videoMessage;
+      }
+
+      // Ждём перед следующей проверкой
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    } catch (error) {
+      console.error("Ошибка при ожидании видео:", error);
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    }
+  }
+
+  throw new Error(
+    `Таймаут ожидания видео от бота ${botUsername} для jobId ${jobId} (${timeoutMs / 1000} секунд)`
+  );
+}
+
+/**
+ * @deprecated Используйте waitForSyntxVideoByJobId вместо этой функции
+ * Оставлена для обратной совместимости
+ */
 async function waitForSyntxVideo(
   client: TelegramClient,
   chat: Api.TypeEntityLike,
@@ -256,7 +425,8 @@ async function waitForSyntxVideo(
         if (message.id > requestMessageId) {
           // Проверяем, что это видео не слишком старое (не более 20 минут назад)
           // Это помогает избежать присвоения старых видео новым запросам
-          const messageDate = message.date ? message.date.getTime() : 0;
+          // message.date - это Unix timestamp в секундах, умножаем на 1000 для миллисекунд
+          const messageDate = message.date ? message.date * 1000 : 0;
           const maxAge = 20 * 60 * 1000; // 20 минут
           if (Date.now() - messageDate > maxAge) {
             console.log(`[Syntx] Пропускаем слишком старое видео: message ID: ${message.id}, возраст: ${Math.round((Date.now() - messageDate) / 1000 / 60)} минут`);
