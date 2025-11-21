@@ -212,6 +212,43 @@ const VideoGeneration: React.FC = () => {
   
   // Хук для Toast-уведомлений
   const toast = useToast()
+
+  // Функция для копирования названия ролика в буфер обмена
+  const handleCopyTitle = async () => {
+    const titleToCopy = videoTitle?.trim() || ''
+    
+    if (!titleToCopy) {
+      toast.info('Название пока пустое')
+      return
+    }
+
+    try {
+      // Проверяем поддержку Clipboard API
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(titleToCopy)
+        toast.success('Название ролика скопировано')
+      } else {
+        // Fallback для старых браузеров
+        const textArea = document.createElement('textarea')
+        textArea.value = titleToCopy
+        textArea.style.position = 'fixed'
+        textArea.style.opacity = '0'
+        document.body.appendChild(textArea)
+        textArea.select()
+        try {
+          document.execCommand('copy')
+          toast.success('Название ролика скопировано')
+        } catch (err) {
+          toast.error('Не удалось скопировать. Скопируйте вручную.')
+        } finally {
+          document.body.removeChild(textArea)
+        }
+      }
+    } catch (error) {
+      console.error('Ошибка при копировании:', error)
+      toast.error('Не удалось скопировать название')
+    }
+  }
   
   // Храним предыдущее состояние задач для отслеживания изменений статусов
   const previousJobsRef = useRef<Map<string, VideoJobStatus>>(new Map())
@@ -1656,15 +1693,24 @@ const VideoGeneration: React.FC = () => {
             )}
           </div>
 
-          {/* Закреплённая кнопка генерации для мобильных */}
+          {/* Закреплённая панель с кнопками для мобильных */}
           <div className="mobile-generate-button">
-            <button
-              className="button mobile-generate-button__button"
-              onClick={handleGenerateVideo}
-              disabled={loading || !veoPrompt.trim() || activeJobsCount >= maxActiveJobs}
-            >
-              {loading ? '⏳ Создание задачи...' : '🎬 Сгенерировать видео'}
-            </button>
+            <div className="mobile-generate-button__container">
+              <button
+                className="button button-secondary mobile-generate-button__copy"
+                onClick={handleCopyTitle}
+                title="Скопировать название ролика"
+              >
+                📋 Скопировать название
+              </button>
+              <button
+                className="button mobile-generate-button__generate"
+                onClick={handleGenerateVideo}
+                disabled={loading || !veoPrompt.trim() || activeJobsCount >= maxActiveJobs}
+              >
+                {loading ? '⏳ Создание задачи...' : '🎬 Сгенерировать видео'}
+              </button>
+            </div>
           </div>
 
           {/* Список задач */}
